@@ -1,4 +1,4 @@
-FROM node:22-slim AS pnpm-base
+FROM node:24-slim AS pnpm-base
 ENV PNPM_HOME="/pnpm"
 ENV PATH="$PNPM_HOME:$PATH"
 # Run pnpm non-interactively in container builds without a TTY.
@@ -12,8 +12,10 @@ RUN --mount=type=cache,id=pnpm,target=/pnpm/store pnpm install --prod --frozen-l
 
 # Run the build on the NATIVE builder platform (--platform=$BUILDPLATFORM), not
 # the target platform. tsup/esbuild ship a Go binary that can crash under QEMU
-# emulation when cross-building. Output is architecture-independent JS.
-FROM --platform=$BUILDPLATFORM node:22-slim AS build
+# emulation (fatal error: lfstack.push) when cross-building. The output is plain,
+# architecture-independent JavaScript, so it is safe to copy into a target-arch
+# final image below.
+FROM --platform=$BUILDPLATFORM node:24-slim AS build
 ENV PNPM_HOME="/pnpm"
 ENV PATH="$PNPM_HOME:$PATH"
 ENV CI=true
@@ -26,7 +28,7 @@ COPY src ./src
 RUN pnpm run build
 
 # Minimal slim runtime stage containing only package.json, prod dependencies, and compiled dist/.
-FROM node:22-slim AS runtime
+FROM node:24-slim AS runtime
 WORKDIR /app
 COPY package.json ./
 COPY --from=prod-deps /app/node_modules ./node_modules

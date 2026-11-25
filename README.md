@@ -1,4 +1,4 @@
-# argocd-mcp-plus (`0.9.1`)
+# argocd-mcp (`0.9.1`)
 
 A stateless, dual-era ([MCP `2026-07-28`](https://modelcontextprotocol.io) + `2025-11-25` compatible) Model Context Protocol server for [Argo CD](https://argo-cd.readthedocs.io/en/stable/), hardened for production GitOps diagnostics and multi-replica Kubernetes deployments.
 
@@ -7,7 +7,7 @@ A stateless, dual-era ([MCP `2026-07-28`](https://modelcontextprotocol.io) + `20
 - **Dual-Era Stateless Transport (`stdio` + `/mcp`)**: Built on `@modelcontextprotocol/server` v2. Serves both `2026-07-28` (`server/discover`, per-request `_meta`, `Mcp-Method`/`Mcp-Name`/`Mcp-Param-*` headers, MRTR confirmations) and `2025-xx` (`initialize`) clients without in-memory session maps. Legacy `/sse` transport has been removed.
 - **Read-Only by Default (`--toolsets=core,diagnostics`)**: Exposes 14 read-only inspection and SRE triage tools out of the box. Operational (`ops`) and lifecycle (`admin`) tools must be explicitly enabled.
 - **High-Signal SRE Curation**:
-  - `diagnose_application`: Concurrently fetches Application status, Resource Tree, and Events, strips `Synced + Healthy` nodes, extracts `Warning` events, and adds Argo Rollouts pause hints.
+  - `diagnose_application`: Concurrently fetches Application status, Resource Tree, Application events, and top abnormal child workload `Warning` events; strips `Synced + Healthy` nodes; and adds Argo Rollouts pause hints.
   - `diff_application`: Computes field-level `liveState` vs `targetState` diffs for out-of-sync resources without dumping raw controller metadata.
 - **Defense-in-Depth & Payload Governance**:
   - Controlled Argo CD URL builder preventing path traversal and preserving reverse-proxy subpaths (e.g. `https://host/argocd`).
@@ -33,7 +33,7 @@ Control active toolsets via `--toolsets` / `MCP_TOOLSETS` (default: `core,diagno
 ```json
 {
   "mcpServers": {
-    "argocd-mcp-plus": {
+    "argocd-mcp": {
       "command": "node",
       "args": ["dist/index.js", "stdio"],
       "env": {
@@ -45,10 +45,12 @@ Control active toolsets via `--toolsets` / `MCP_TOOLSETS` (default: `core,diagno
 }
 ```
 
-### Stateless HTTP (`/mcp`) & Container Image (`argocd-mcp-plus:0.9.1`)
+### Stateless HTTP (`/mcp`) & Container Image
+
+Default image repository is configured for personal GHCR publishing (`ghcr.io/lazysnail1024/mcp-for-argocd`, override via `IMAGE_NAME` / `IMAGE_TAG` in `Makefile`):
 
 ```bash
-# Build slim container image (node:22-slim, UID 1000)
+# Build slim container image (node:24-slim, UID 1000)
 make docker-build
 
 # Run with network exposure + inbound auth + multi-replica MRTR secret
@@ -58,10 +60,11 @@ docker run -p 3000:3000 \
   -e MCP_REQUEST_STATE_SECRET="<shared-32byte-secret>" \
   -e ARGOCD_BASE_URL="https://argocd.example.com" \
   -e ARGOCD_API_TOKEN="<argocd-token>" \
-  argocd-mcp-plus:0.9.1 http --stateless
+  ghcr.io/lazysnail1024/mcp-for-argocd:0.9.1 http --stateless --json-response
 ```
 
-> `--stateless` defaults to `true` and is retained for seamless CLI compatibility with existing deployments.
+- `--stateless` defaults to `true` and is retained for backwards CLI compatibility with existing deployments.
+- `--json-response` defaults to `true`, replying with a single `application/json` body instead of an SSE frame (avoiding the 1 MiB single-event SSE cap in clients such as Python MCP SDK v2). Pass `--no-json-response` to emit legacy SSE streams on 2025-era requests.
 
 ### Key Configuration Variables
 
@@ -96,3 +99,7 @@ make test-image
 # Tier 4 Live kind Cluster (2 Replicas + Real Argo CD) E2E Acceptance
 make test-e2e-kind
 ```
+
+## Credits
+
+The project was initially created and donated by [@jiachengxu](https://github.com/jiachengxu), [@imwithye](https://github.com/imwithye), [@hwwn](https://github.com/hwwn), and [@alexmt](https://github.com/alexmt) from [Akuity](https://akuity.io/).

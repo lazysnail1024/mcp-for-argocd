@@ -134,8 +134,11 @@ done
 
 kill ${PF_ARGO_PID} >/dev/null 2>&1 || true
 
-echo "==> [Setup 5] Deploy 2-replica argocd-mcp-plus:0.9.1 into ${E2E_NS} (default read-only core,diagnostics)"
-kubectl create secret generic argocd-mcp-plus-secrets -n "${E2E_NS}" \
+echo "==> [Setup 5] Deploy 2-replica ghcr.io/lazysnail1024/mcp-for-argocd:0.9.1 into ${E2E_NS} (default read-only core,diagnostics)"
+# Clean up legacy argocd-mcp-plus deployment/service if present from earlier runs (same NodePort 30901)
+kubectl delete deployment/argocd-mcp-plus service/argocd-mcp-plus -n "${E2E_NS}" --ignore-not-found >/dev/null 2>&1 || true
+
+kubectl create secret generic argocd-mcp-secrets -n "${E2E_NS}" \
   --from-literal=mcp-auth-token="${MCP_AUTH_TOKEN}" \
   --from-literal=mcp-request-state-secret="${MCP_REQUEST_STATE_SECRET}" \
   --from-literal=argocd-api-token="${ARGOCD_API_TOKEN}" \
@@ -146,16 +149,16 @@ cat <<EOF > "${TMPDIR_E2E}/registry.json"
   { "baseUrl": "https://argocd-server.argocd.svc", "token": "${ARGOCD_API_TOKEN}" }
 ]
 EOF
-kubectl create secret generic argocd-mcp-plus-registry -n "${E2E_NS}" \
+kubectl create secret generic argocd-mcp-registry -n "${E2E_NS}" \
   --from-file=registry.json="${TMPDIR_E2E}/registry.json" \
   --dry-run=client -o yaml | kubectl apply -f -
 
 kubectl apply -f deploy/kind/deployment.yaml
 # Ensure default read-only posture even if a prior interrupted run left MCP_TOOLSETS injected
-kubectl set env -n "${E2E_NS}" deployment/argocd-mcp-plus MCP_TOOLSETS- >/dev/null 2>&1 || true
+kubectl set env -n "${E2E_NS}" deployment/argocd-mcp MCP_TOOLSETS- >/dev/null 2>&1 || true
 # Force rollout restart so pods pick up any freshly loaded local image under the same tag
-kubectl rollout restart deployment/argocd-mcp-plus -n "${E2E_NS}"
-kubectl rollout status deployment/argocd-mcp-plus -n "${E2E_NS}" --timeout=120s
+kubectl rollout restart deployment/argocd-mcp -n "${E2E_NS}"
+kubectl rollout status deployment/argocd-mcp -n "${E2E_NS}" --timeout=120s
 # Wait briefly so kube-proxy syncs both ready Pod endpoints into iptables/nftables
 sleep 3
 

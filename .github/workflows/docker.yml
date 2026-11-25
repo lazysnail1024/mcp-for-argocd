@@ -45,7 +45,8 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Log in to Quay.io
+      - name: Log in to Quay.io (optional)
+        if: ${{ secrets.QUAY_USERNAME != '' && secrets.QUAY_TOKEN != '' }}
         uses: docker/login-action@65b78e6e13532edd9afa3aa52ac7964289d1a9c1
         with:
           registry: ${{ env.QUAY_REGISTRY }}
@@ -54,11 +55,11 @@ jobs:
 
       - name: Extract metadata (tags, labels) for Docker
         id: meta
-        uses: docker/metadata-action@9ec57ed1fcdbf14dcef7dfbe97b2010124a938b7
+        uses: docker/metadata-action@9ec57ed1fcdbf14dcef7dfbe911e516c093c6f3fc4
         with:
           images: |
             ${{ env.GHCR_REGISTRY }}/${{ env.IMAGE_NAME }}
-            ${{ env.QUAY_REGISTRY }}/${{ env.QUAY_IMAGE_NAME }}
+            name=${{ env.QUAY_REGISTRY }}/${{ env.QUAY_IMAGE_NAME }},enable=${{ secrets.QUAY_USERNAME != '' && secrets.QUAY_TOKEN != '' }}
           tags: |
             type=raw,value=latest,enable=${{ github.event_name == 'push' }}
             type=ref,event=tag
@@ -69,7 +70,7 @@ jobs:
 
       - name: Build and push Docker image
         id: push
-        uses: docker/build-push-action@f2a1d5e99d037542a71f64918e516c093c6f3fc4
+        uses: docker/build-push-action@f2a1d5e99d037542a1d5e99d03754289d1a9c1
         with:
           context: .
           push: true

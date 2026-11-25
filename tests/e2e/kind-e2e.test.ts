@@ -135,7 +135,7 @@ const kubectl = (...args: string[]): string =>
   execFileSync('kubectl', args, { encoding: 'utf8' }).trim();
 
 const getPodNames = (): string[] => {
-  const raw = kubectl('get', 'pods', '-n', E2E_NS, '-l', 'app=argocd-mcp-plus', '-o', 'json');
+  const raw = kubectl('get', 'pods', '-n', E2E_NS, '-l', 'app=argocd-mcp', '-o', 'json');
   const parsed = JSON.parse(raw) as {
     items: Array<{
       metadata: { name: string; deletionTimestamp?: string };
@@ -202,7 +202,7 @@ test('E2E-01: 2-replica pods healthy on /healthz and 30 stateless requests load-
   assert.equal(health.status, 200);
   const hJson = health.json as { status: string; name: string; version: string };
   assert.equal(hJson.status, 'ok');
-  assert.equal(hJson.name, 'argocd-mcp-plus');
+  assert.equal(hJson.name, 'argocd-mcp');
   assert.equal(hJson.version, '0.9.1');
 
   for (let i = 0; i < 30; i++) {
@@ -239,7 +239,7 @@ test('E2E-02: Dual-Era protocol compatibility (2026-07-28 + 2025-11-25 + stdio +
     }
   ).result;
   assert.equal(d.resultType, 'complete');
-  assert.equal(d._meta['io.modelcontextprotocol/serverInfo'].name, 'argocd-mcp-plus');
+  assert.equal(d._meta['io.modelcontextprotocol/serverInfo'].name, 'argocd-mcp');
   assert.equal(d._meta['io.modelcontextprotocol/serverInfo'].version, '0.9.1');
   assert.equal(d.ttlMs, 3600000);
   assert.equal(d.cacheScope, 'public');
@@ -337,7 +337,7 @@ test('E2E-02: Dual-Era protocol compatibility (2026-07-28 + 2025-11-25 + stdio +
       encoding: 'utf8'
     }
   );
-  assert.match(stdioOut, /argocd-mcp-plus/);
+  assert.match(stdioOut, /argocd-mcp/);
 });
 
 test('E2E-03: Default core,diagnostics exposes exactly 14 read-only tools and rejects writes with -32602', async () => {
@@ -688,10 +688,10 @@ test('E2E-09 & E2E-10: Cross-replica MRTR HMAC sync (forced prune=false, partial
       'env',
       '-n',
       E2E_NS,
-      'deployment/argocd-mcp-plus',
+      'deployment/argocd-mcp',
       'MCP_TOOLSETS=core,diagnostics,ops,admin'
     );
-    kubectl('rollout', 'status', '-n', E2E_NS, 'deployment/argocd-mcp-plus', '--timeout=120s');
+    kubectl('rollout', 'status', '-n', E2E_NS, 'deployment/argocd-mcp', '--timeout=120s');
 
     const pods = getPodNames();
     assert.equal(pods.length, 2);
@@ -829,7 +829,7 @@ test('E2E-09 & E2E-10: Cross-replica MRTR HMAC sync (forced prune=false, partial
       ...tempAppSpec,
       metadata: {
         ...tempAppSpec.metadata,
-        annotations: { 'e2e.argocd-mcp-plus/updated': 'true' }
+        annotations: { 'e2e.argocd-mcp/updated': 'true' }
       }
     };
     const updated = parseToolJson<{ metadata?: { annotations?: Record<string, string> } }>(
@@ -839,7 +839,7 @@ test('E2E-09 & E2E-10: Cross-replica MRTR HMAC sync (forced prune=false, partial
       })
     );
     assert.equal(updated.isError, false, `update_application failed: ${updated.rawText}`);
-    assert.equal(updated.data.metadata?.annotations?.['e2e.argocd-mcp-plus/updated'], 'true');
+    assert.equal(updated.data.metadata?.annotations?.['e2e.argocd-mcp/updated'], 'true');
 
     // Delete without confirmApplicationName -> rejected!
     const delRejected = parseToolJson(
@@ -879,7 +879,7 @@ test('E2E-09 & E2E-10: Cross-replica MRTR HMAC sync (forced prune=false, partial
     await pfA?.close();
     await pfB?.close();
     // Restore default read-only deployment posture after Phase B verification
-    kubectl('set', 'env', '-n', E2E_NS, 'deployment/argocd-mcp-plus', 'MCP_TOOLSETS-');
-    kubectl('rollout', 'status', '-n', E2E_NS, 'deployment/argocd-mcp-plus', '--timeout=120s');
+    kubectl('set', 'env', '-n', E2E_NS, 'deployment/argocd-mcp', 'MCP_TOOLSETS-');
+    kubectl('rollout', 'status', '-n', E2E_NS, 'deployment/argocd-mcp', '--timeout=120s');
   }
 });

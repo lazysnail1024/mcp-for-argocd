@@ -309,10 +309,7 @@ test('Tier 2 HTTP Dual-Era integration: 2026-07-28 modern + 2025-11-25 legacy + 
       };
     };
     assert.equal(discoverRes.result.resultType, 'complete');
-    assert.equal(
-      discoverRes.result._meta['io.modelcontextprotocol/serverInfo'].name,
-      'argocd-mcp-plus'
-    );
+    assert.equal(discoverRes.result._meta['io.modelcontextprotocol/serverInfo'].name, 'argocd-mcp');
     assert.equal(discoverRes.result._meta['io.modelcontextprotocol/serverInfo'].version, '0.9.1');
     assert.equal(discoverRes.result.ttlMs, 3600000);
     assert.equal(discoverRes.result.cacheScope, 'public');
@@ -482,7 +479,7 @@ test('Tier 2 HTTP Dual-Era integration: 2026-07-28 modern + 2025-11-25 legacy + 
     assert.equal(legacyInit.headers['mcp-session-id'], undefined);
     assert.equal(
       (legacyInit.json as { result: { serverInfo: { name: string } } }).result.serverInfo.name,
-      'argocd-mcp-plus'
+      'argocd-mcp'
     );
 
     const legacyInitialized = await postMcp(
@@ -811,10 +808,7 @@ test('Tier 2 stdio subprocess serves 2025-11-25 legacy and 2026-07-28 modern exc
         _meta: { 'io.modelcontextprotocol/serverInfo': { name: string; version: string } };
       };
     };
-    assert.equal(
-      discover.result._meta['io.modelcontextprotocol/serverInfo'].name,
-      'argocd-mcp-plus'
-    );
+    assert.equal(discover.result._meta['io.modelcontextprotocol/serverInfo'].name, 'argocd-mcp');
     assert.equal(discover.result._meta['io.modelcontextprotocol/serverInfo'].version, '0.9.1');
   } finally {
     await mockArgo.close();

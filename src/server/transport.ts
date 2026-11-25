@@ -40,6 +40,7 @@ export type CommonServerOptions = {
 export type TransportOptions = ListenerSecurityOptions &
   CommonServerOptions & {
     stateless?: boolean;
+    jsonResponse?: boolean;
   };
 
 const resolveSelection = (options: CommonServerOptions): ToolSelectionConfig => ({
@@ -195,6 +196,7 @@ export const createHttpApp = (options: TransportOptions) => {
   const scopeFence = options.scopeFence ?? ScopeFence.fromEnv();
   const selection = resolveSelection(options);
   const legacyMode: LegacyMode = options.legacyMode ?? 'stateless';
+  const jsonResponse = options.jsonResponse ?? true;
 
   if (options.stateless === false) {
     logger.warn(
@@ -273,12 +275,12 @@ export const createHttpApp = (options: TransportOptions) => {
         return;
       }
 
-      // Legacy 2025-era stateless serving with enableJsonResponse enabled.
-      const legacyReq = normalizeLegacyAccept(webReq);
+      // Legacy 2025-era stateless serving (JSON response by default; SSE frames with --no-json-response).
+      const legacyReq = jsonResponse ? normalizeLegacyAccept(webReq) : webReq;
       const server = buildServerForRequest({ era: 'legacy', requestInfo: legacyReq });
       const transport = new WebStandardStreamableHTTPServerTransport({
         sessionIdGenerator: undefined,
-        enableJsonResponse: true
+        enableJsonResponse: jsonResponse
       });
       await server.connect(transport);
       try {
@@ -309,10 +311,11 @@ export const createHttpApp = (options: TransportOptions) => {
 export const connectHttpTransport = (options: TransportOptions) => {
   const { app, security } = createHttpApp(options);
   const legacyMode = options.legacyMode ?? 'stateless';
+  const jsonResponse = options.jsonResponse ?? true;
   return listen(
     app,
     security.bindAddress,
     options.port,
-    `${packageJSON.name}@${packageJSON.version} HTTP stateless transport (legacy=${legacyMode})`
+    `${packageJSON.name}@${packageJSON.version} HTTP stateless transport (legacy=${legacyMode}, jsonResponse=${jsonResponse})`
   );
 };

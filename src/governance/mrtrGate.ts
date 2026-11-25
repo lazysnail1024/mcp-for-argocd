@@ -27,7 +27,7 @@ const deriveKeyBytes = (secret: string | undefined): Uint8Array => {
     // Domain-separated SHA-256 guarantees a deterministic 32-byte (256-bit) HMAC key
     // across all stateless replicas even if the operator supplied a shorter secret.
     return new Uint8Array(
-      createHash('sha256').update('argocd-mcp-plus:mrtr-request-state:v1:').update(trimmed).digest()
+      createHash('sha256').update('argocd-mcp:mrtr-request-state:v1:').update(trimmed).digest()
     );
   }
   logger.warn(

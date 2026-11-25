@@ -1,6 +1,6 @@
 PNPM ?= $(shell command -v pnpm 2>/dev/null || echo "npx -y pnpm@10.34.1")
 PORT ?= 3000
-IMAGE_NAME ?= argocd-mcp-plus
+IMAGE_NAME ?= ghcr.io/lazysnail1024/mcp-for-argocd
 IMAGE_TAG ?= 0.9.1
 IMAGE := $(IMAGE_NAME):$(IMAGE_TAG)
 DOCKER_BUILD_FLAGS ?= --network=host

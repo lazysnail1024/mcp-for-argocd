@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-IMAGE="${IMAGE:-argocd-mcp-plus:0.9.1}"
+IMAGE="${IMAGE:-ghcr.io/lazysnail1024/mcp-for-argocd:0.9.1}"
 
 echo "==> [Smoke 1] Verify non-root UID 1000"
 UID_OUT="$(docker run --rm --entrypoint id "${IMAGE}" -u)"
@@ -40,13 +40,13 @@ if [[ "${SSE_CODE}" -eq 0 ]]; then
 fi
 echo "PASS: sse subcommand rejected (exit code=${SSE_CODE})"
 
-echo "==> [Smoke 5] Verify default 'http', explicit 'http --stateless', and '--no-stateless' warning + /healthz"
-for MODE_LABEL in "default-http" "explicit-stateless" "no-stateless-fallback"; do
+echo "==> [Smoke 5] Verify default 'http', 'http --stateless --json-response', and '--no-stateless' warning + /healthz"
+for MODE_LABEL in "default-http" "explicit-stateless-json" "no-stateless-fallback"; do
   CID="argocd-mcp-smoke-${MODE_LABEL}-$$"
   if [[ "${MODE_LABEL}" == "default-http" ]]; then
     ARGS=("http")
-  elif [[ "${MODE_LABEL}" == "explicit-stateless" ]]; then
-    ARGS=("http" "--stateless")
+  elif [[ "${MODE_LABEL}" == "explicit-stateless-json" ]]; then
+    ARGS=("http" "--stateless" "--json-response")
   else
     ARGS=("http" "--no-stateless")
   fi
@@ -61,7 +61,7 @@ for MODE_LABEL in "default-http" "explicit-stateless" "no-stateless-fallback"; d
   OK=0
   for _ in $(seq 1 20); do
     BODY="$(curl -fsS "http://127.0.0.1:${HOST_PORT}/healthz" 2>/dev/null || true)"
-    if echo "${BODY}" | grep -q '"name":"argocd-mcp-plus"' && echo "${BODY}" | grep -q '"version":"0.9.1"'; then
+    if echo "${BODY}" | grep -q '"name":"argocd-mcp"' && echo "${BODY}" | grep -q '"version":"0.9.1"'; then
       OK=1
       break
     fi

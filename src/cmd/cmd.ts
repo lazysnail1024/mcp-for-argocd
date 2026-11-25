@@ -74,6 +74,15 @@ const listenerOptions = <T>(y: Argv<T>) =>
       description:
         'HTTP transport is always stateless. Retained (default: true) for backwards CLI compatibility.'
     })
+    // Retained with default=true so stateless responses return a single JSON body (avoiding
+    // 1 MiB SSE event limits in clients such as Python MCP SDK v2). Pass --no-json-response
+    // to emit legacy SSE frames on 2025-era requests.
+    .option('json-response', {
+      type: 'boolean',
+      default: true,
+      description:
+        'Reply to stateless HTTP requests with a single JSON body instead of an SSE stream (default: true). Pass --no-json-response for legacy SSE frames.'
+    })
     .check(({ port }) => {
       if (!Number.isInteger(port) || port < 1 || port > 65535) {
         const shown = Number.isNaN(port) ? 'not a number' : port;
@@ -95,6 +104,7 @@ type ListenerArgv = ServerArgv & {
   allowedOrigin: string[];
   allowUnauthenticated: boolean;
   stateless: boolean;
+  jsonResponse: boolean;
 };
 
 const commonServerOptions = (argv: ServerArgv): CommonServerOptions => ({
@@ -111,7 +121,8 @@ const transportOptions = (argv: ListenerArgv): TransportOptions => ({
   allowedOrigins: argv.allowedOrigin,
   authToken: process.env.MCP_AUTH_TOKEN,
   allowUnauthenticated: argv.allowUnauthenticated,
-  stateless: argv.stateless
+  stateless: argv.stateless,
+  jsonResponse: argv.jsonResponse
 });
 
 const start = (run: () => void) => {
@@ -126,13 +137,13 @@ const start = (run: () => void) => {
 export const cmd = () => {
   const exe = yargs(hideBin(process.argv));
 
-  exe.command('stdio', 'Start argocd-mcp-plus server using stdio.', serverOptions, (argv) =>
+  exe.command('stdio', 'Start ArgoCD MCP server using stdio.', serverOptions, (argv) =>
     start(() => connectStdioTransport(commonServerOptions(argv as ServerArgv)))
   );
 
   exe.command(
     'http',
-    'Start argocd-mcp-plus server using stateless Streamable HTTP (/mcp).',
+    'Start ArgoCD MCP server using stateless Streamable HTTP (/mcp).',
     listenerOptions,
     (argv) => start(() => connectHttpTransport(transportOptions(argv as ListenerArgv)))
   );

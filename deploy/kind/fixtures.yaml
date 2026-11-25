@@ -88,7 +88,7 @@ spec:
                   spec:
                     containers:
                       - name: web
-                        image: argocd-mcp-plus:0.9.1
+                        image: ghcr.io/lazysnail1024/mcp-for-argocd:0.9.1
                         imagePullPolicy: Never
                         command: ["sh", "-c", "echo 'INFO healthy-web ready'; sleep 86400"]
               EOF
@@ -100,7 +100,7 @@ spec:
                 echo "  name: healthy-large-cm"
                 echo "data:"
                 printf '  payload: "'
-                awk 'BEGIN { for (i = 0; i < 1100; i++) printf "argocd-mcp-plus-byte-breaker-test-chunk-0123456789-abcdef-ghijklmnop-" }'
+                awk 'BEGIN { for (i = 0; i < 1100; i++) printf "argocd-mcp-byte-breaker-test-chunk-0123456789-abcdef-ghijklmnop-" }'
                 echo '"'
               } > /tmp/work/apps/healthy/large-cm.yaml
 
@@ -158,7 +158,7 @@ spec:
                   spec:
                     containers:
                       - name: logger
-                        image: argocd-mcp-plus:0.9.1
+                        image: ghcr.io/lazysnail1024/mcp-for-argocd:0.9.1
                         imagePullPolicy: Never
                         command:
                           - sh
@@ -249,7 +249,7 @@ metadata:
   name: mcp-e2e-project
   namespace: argocd
 spec:
-  description: Isolated E2E acceptance project for argocd-mcp-plus
+  description: Isolated E2E acceptance project for argocd-mcp
   sourceRepos:
     - "git://e2e-git-repo.mcp-e2e-system.svc.cluster.local:9418/*"
   destinations:

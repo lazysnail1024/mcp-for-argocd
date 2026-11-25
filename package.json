@@ -1,5 +1,5 @@
 {
-  "name": "argocd-mcp-plus",
+  "name": "argocd-mcp",
   "version": "0.9.1",
   "description": "Argo CD MCP Server (Stateless Dual-Era & Hardened Governance)",
   "packageManager": "pnpm@10.34.1",
@@ -13,7 +13,7 @@
   "keywords": [
     "mcp",
     "argocd",
-    "argocd-mcp-plus",
+    "argocd-mcp",
     "argo-cd",
     "gitops",
     "kubernetes"
@@ -21,7 +21,7 @@
   "main": "dist/index.js",
   "type": "module",
   "bin": {
-    "argocd-mcp-plus": "dist/index.js"
+    "argocd-mcp": "dist/index.js"
   },
   "files": [
     "dist",
