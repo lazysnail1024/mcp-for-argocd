@@ -7,7 +7,7 @@ export default defineConfig({
   clean: true,
   dts: true,
   format: ["esm"],
-  target: "es2016",
+  target: "node20",
   banner: {
     js: '#!/usr/bin/env node'
   }

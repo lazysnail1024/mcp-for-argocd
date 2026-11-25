@@ -1,8 +1,11 @@
 {
-  "name": "argocd-mcp",
-  "version": "0.0.0",
-  "description": "Argo CD MCP Server",
+  "name": "argocd-mcp-plus",
+  "version": "0.9.1",
+  "description": "Argo CD MCP Server (Stateless Dual-Era & Hardened Governance)",
   "packageManager": "pnpm@10.34.1",
+  "engines": {
+    "node": ">=20"
+  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/argoproj-labs/mcp-for-argocd.git"
@@ -10,25 +13,15 @@
   "keywords": [
     "mcp",
     "argocd",
-    "argocd-mcp",
-    "argocd-mcp-server",
+    "argocd-mcp-plus",
     "argo-cd",
-    "argo-cd-mcp",
-    "argo-cd-mcp-server",
-    "cicd",
-    "cicd-mcp",
-    "cicd-mcp-server",
     "gitops",
-    "gitops-mcp",
-    "gitops-mcp-server",
-    "kubernetes",
-    "kubernetes-mcp",
-    "kubernetes-mcp-server"
+    "kubernetes"
   ],
   "main": "dist/index.js",
   "type": "module",
   "bin": {
-    "argocd-mcp": "dist/index.js"
+    "argocd-mcp-plus": "dist/index.js"
   },
   "files": [
     "dist",
@@ -38,23 +31,25 @@
   ],
   "scripts": {
     "dev": "tsx watch src/index.ts http",
-    "dev-sse": "tsx watch src/index.ts sse",
     "lint": "eslint src/**/*.ts --no-warn-ignored",
     "lint:fix": "eslint src/**/*.ts --fix",
     "build": "tsup",
     "build:watch": "tsup --watch",
     "test": "node --import tsx --test \"src/**/*.test.ts\"",
+    "test:e2e": "node --import tsx --test \"tests/e2e/**/*.test.ts\"",
     "generate-types": "dtsgen -c dtsgen.json -o src/types/argocd.d.ts swagger.json"
   },
   "author": "Argo Proj Contributors.",
   "license": "Apache-2.0",
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.29.0",
+    "@modelcontextprotocol/express": "^2.0.2",
+    "@modelcontextprotocol/node": "^2.1.2",
+    "@modelcontextprotocol/server": "^2.4.0",
     "dotenv": "^16.5.0",
     "express": "^5.1.0",
     "pino": "^9.6.0",
     "yargs": "^17.7.2",
-    "zod": "^3.25.0"
+    "zod": "^4.2.0"
   },
   "devDependencies": {
     "@dtsgenerator/replace-namespace": "^1.7.0",

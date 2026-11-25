@@ -1,0 +1,312 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: mcp-e2e-system
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: mcp-e2e-ok
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: mcp-e2e-broken
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: mcp-e2e-denied
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: mcp-e2e-temp
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: e2e-git-repo
+  namespace: mcp-e2e-system
+  labels:
+    app: e2e-git-repo
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: e2e-git-repo
+  template:
+    metadata:
+      labels:
+        app: e2e-git-repo
+    spec:
+      initContainers:
+        - name: seed-repo
+          image: quay.io/argoproj/argocd:v3.6.2
+          imagePullPolicy: IfNotPresent
+          command:
+            - sh
+            - -ec
+            - |
+              rm -rf /tmp/work /srv/git/e2e-repo.git
+              mkdir -p /tmp/work/apps/healthy /tmp/work/apps/broken /tmp/work/apps/denied /srv/git
+
+              cat <<'EOF' > /tmp/work/apps/healthy/manifests.yaml
+              apiVersion: v1
+              kind: ConfigMap
+              metadata:
+                name: healthy-config
+              data:
+                LOG_LEVEL: "info"
+                MAX_TOKENS: "4096"
+                APP_MODE: "production-safe"
+              ---
+              apiVersion: v1
+              kind: Service
+              metadata:
+                name: healthy-svc
+              spec:
+                selector:
+                  app: healthy-web
+                ports:
+                  - port: 80
+                    targetPort: 8080
+              ---
+              apiVersion: apps/v1
+              kind: Deployment
+              metadata:
+                name: healthy-web
+              spec:
+                replicas: 1
+                selector:
+                  matchLabels:
+                    app: healthy-web
+                template:
+                  metadata:
+                    labels:
+                      app: healthy-web
+                  spec:
+                    containers:
+                      - name: web
+                        image: argocd-mcp-plus:0.9.1
+                        imagePullPolicy: Never
+                        command: ["sh", "-c", "echo 'INFO healthy-web ready'; sleep 86400"]
+              EOF
+
+              {
+                echo "apiVersion: v1"
+                echo "kind: ConfigMap"
+                echo "metadata:"
+                echo "  name: healthy-large-cm"
+                echo "data:"
+                printf '  payload: "'
+                awk 'BEGIN { for (i = 0; i < 1100; i++) printf "argocd-mcp-plus-byte-breaker-test-chunk-0123456789-abcdef-ghijklmnop-" }'
+                echo '"'
+              } > /tmp/work/apps/healthy/large-cm.yaml
+
+              cat <<'EOF' > /tmp/work/apps/broken/manifests.yaml
+              apiVersion: v1
+              kind: Service
+              metadata:
+                name: broken-ok-svc
+              spec:
+                selector:
+                  app: broken-logger
+                ports:
+                  - port: 80
+                    targetPort: 8080
+              ---
+              apiVersion: v1
+              kind: ConfigMap
+              metadata:
+                name: broken-drift-cm
+              data:
+                mode: "git-desired"
+                tier: "e2e"
+              ---
+              apiVersion: v1
+              kind: Secret
+              metadata:
+                name: broken-std-secret
+              type: Opaque
+              stringData:
+                db_pass: "standard-secret-value"
+              ---
+              apiVersion: v1
+              kind: Secret
+              metadata:
+                name: broken-exposed-secret
+                annotations:
+                  argocd.argoproj.io/show-secret-value: "true"
+              type: Opaque
+              stringData:
+                api_key: "exposed-secret-must-be-redacted-by-mcp"
+              ---
+              apiVersion: apps/v1
+              kind: Deployment
+              metadata:
+                name: broken-logger
+              spec:
+                replicas: 1
+                selector:
+                  matchLabels:
+                    app: broken-logger
+                template:
+                  metadata:
+                    labels:
+                      app: broken-logger
+                  spec:
+                    containers:
+                      - name: logger
+                        image: argocd-mcp-plus:0.9.1
+                        imagePullPolicy: Never
+                        command:
+                          - sh
+                          - -c
+                          - "echo 'INFO broken-logger started'; echo 'ERROR e2e-sentinel-fault detected in worker'; sleep 86400"
+              ---
+              apiVersion: apps/v1
+              kind: Deployment
+              metadata:
+                name: broken-bad-image
+              spec:
+                progressDeadlineSeconds: 10
+                replicas: 1
+                selector:
+                  matchLabels:
+                    app: broken-bad-image
+                template:
+                  metadata:
+                    labels:
+                      app: broken-bad-image
+                  spec:
+                    containers:
+                      - name: bad
+                        image: nonexistent.invalid/e2e-missing:v999
+                        imagePullPolicy: Always
+              EOF
+
+              cat <<'EOF' > /tmp/work/apps/denied/manifests.yaml
+              apiVersion: v1
+              kind: ConfigMap
+              metadata:
+                name: denied-cm
+              data:
+                note: "blocked-by-scope-fence"
+              EOF
+
+              cd /tmp/work
+              git init -b main
+              git config user.email "e2e@local.invalid"
+              git config user.name "E2E Seed"
+              git add .
+              git commit -m "seed e2e fixtures"
+              git clone --bare /tmp/work /srv/git/e2e-repo.git
+              cd /srv/git/e2e-repo.git
+              git update-server-info
+          volumeMounts:
+            - name: git-data
+              mountPath: /srv/git
+      containers:
+        - name: git-daemon
+          image: quay.io/argoproj/argocd:v3.6.2
+          imagePullPolicy: IfNotPresent
+          command:
+            - git
+            - daemon
+            - --reuseaddr
+            - --export-all
+            - --verbose
+            - --base-path=/srv/git
+            - --listen=0.0.0.0
+            - --port=9418
+            - /srv/git
+          ports:
+            - containerPort: 9418
+          volumeMounts:
+            - name: git-data
+              mountPath: /srv/git
+              readOnly: true
+      volumes:
+        - name: git-data
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: e2e-git-repo
+  namespace: mcp-e2e-system
+spec:
+  selector:
+    app: e2e-git-repo
+  ports:
+    - port: 9418
+      targetPort: 9418
+---
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: mcp-e2e-project
+  namespace: argocd
+spec:
+  description: Isolated E2E acceptance project for argocd-mcp-plus
+  sourceRepos:
+    - "git://e2e-git-repo.mcp-e2e-system.svc.cluster.local:9418/*"
+  destinations:
+    - namespace: "mcp-e2e-*"
+      server: "https://kubernetes.default.svc"
+  clusterResourceWhitelist:
+    - group: ""
+      kind: Namespace
+  namespaceResourceWhitelist:
+    - group: "*"
+      kind: "*"
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: e2e-healthy-app
+  namespace: argocd
+spec:
+  project: mcp-e2e-project
+  source:
+    repoURL: git://e2e-git-repo.mcp-e2e-system.svc.cluster.local:9418/e2e-repo.git
+    targetRevision: main
+    path: apps/healthy
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: mcp-e2e-ok
+  syncPolicy:
+    automated:
+      prune: false
+      selfHeal: false
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: e2e-broken-app
+  namespace: argocd
+spec:
+  project: mcp-e2e-project
+  source:
+    repoURL: git://e2e-git-repo.mcp-e2e-system.svc.cluster.local:9418/e2e-repo.git
+    targetRevision: main
+    path: apps/broken
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: mcp-e2e-broken
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: e2e-denied-app
+  namespace: argocd
+spec:
+  project: mcp-e2e-project
+  source:
+    repoURL: git://e2e-git-repo.mcp-e2e-system.svc.cluster.local:9418/e2e-repo.git
+    targetRevision: main
+    path: apps/denied
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: mcp-e2e-denied

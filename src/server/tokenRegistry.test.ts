@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { TokenRegistry, parseTokenRegistry, tokenRegistryFromEnv } from './tokenRegistry.js';
@@ -128,6 +128,28 @@ test('tokenRegistryFromEnv throws (fail closed) when the configured file is malf
   const { path, cleanup } = withTempFile('not json {');
   try {
     assert.throws(() => tokenRegistryFromEnv(path), /not valid JSON/);
+  } finally {
+    cleanup();
+  }
+});
+
+test('tokenRegistryFromEnv hot-reloads rotated tokens when file mtime changes', () => {
+  const { path, cleanup } = withTempFile(
+    JSON.stringify([{ baseUrl: 'https://argo-a.example.com', token: 'token-v1' }])
+  );
+  try {
+    const registry = tokenRegistryFromEnv(path, { reloadCheckIntervalMs: 0 });
+    assert.equal(registry.getToken('https://argo-a.example.com'), 'token-v1');
+
+    writeFileSync(
+      path,
+      JSON.stringify([{ baseUrl: 'https://argo-a.example.com', token: 'token-v2' }]),
+      'utf8'
+    );
+    const future = new Date(Date.now() + 5000);
+    utimesSync(path, future, future);
+
+    assert.equal(registry.getToken('https://argo-a.example.com'), 'token-v2');
   } finally {
     cleanup();
   }

@@ -1,7 +1,7 @@
 import express from 'express';
 import { createHash, timingSafeEqual } from 'node:crypto';
 import net from 'node:net';
-import { hostHeaderValidation } from '@modelcontextprotocol/sdk/server/middleware/hostHeaderValidation.js';
+import { hostHeaderValidation } from '@modelcontextprotocol/express';
 import { logger } from '../logging/logging.js';
 
 // Loopback names, in the bracketed form the Host header and the SDK's
@@ -180,7 +180,7 @@ const canonicalOrigin = (value: string): string | null => {
 const jsonRpcError = (res: express.Response, status: number, message: string): void => {
   res.status(status).json({
     jsonrpc: '2.0',
-    error: { code: -32000, message },
+    error: { code: -32600, message },
     id: null
   });
 };

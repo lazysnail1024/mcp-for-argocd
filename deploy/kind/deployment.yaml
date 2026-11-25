@@ -1,0 +1,108 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: argocd-mcp-plus
+  namespace: mcp-e2e-system
+  labels:
+    app: argocd-mcp-plus
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: argocd-mcp-plus
+  template:
+    metadata:
+      labels:
+        app: argocd-mcp-plus
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+      containers:
+        - name: argocd-mcp-plus
+          image: argocd-mcp-plus:0.9.1
+          imagePullPolicy: Never
+          args:
+            - http
+            - --stateless
+            - --bind-address
+            - 0.0.0.0
+          ports:
+            - name: http
+              containerPort: 3000
+          env:
+            - name: MCP_AUTH_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: argocd-mcp-plus-secrets
+                  key: mcp-auth-token
+            - name: MCP_REQUEST_STATE_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: argocd-mcp-plus-secrets
+                  key: mcp-request-state-secret
+            - name: ARGOCD_BASE_URL
+              value: "https://argocd-server.argocd.svc.cluster.local"
+            - name: ARGOCD_API_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: argocd-mcp-plus-secrets
+                  key: argocd-api-token
+            - name: ARGOCD_TOKEN_REGISTRY_PATH
+              value: "/etc/mcp-tokens/registry.json"
+            - name: NODE_EXTRA_CA_CERTS
+              value: "/etc/argocd-ca/tls.crt"
+            - name: MCP_DENIED_NAMESPACES
+              value: "mcp-e2e-denied"
+            - name: MCP_ALLOWED_RESOURCE_ACTIONS
+              value: "restart"
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 2
+            periodSeconds: 5
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 2
+            periodSeconds: 3
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+          volumeMounts:
+            - name: argocd-ca
+              mountPath: /etc/argocd-ca
+              readOnly: true
+            - name: token-registry
+              mountPath: /etc/mcp-tokens
+              readOnly: true
+      volumes:
+        - name: argocd-ca
+          secret:
+            secretName: argocd-ca-cert
+            items:
+              - key: tls.crt
+                path: tls.crt
+        - name: token-registry
+          secret:
+            secretName: argocd-mcp-plus-registry
+            items:
+              - key: registry.json
+                path: registry.json
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: argocd-mcp-plus
+  namespace: mcp-e2e-system
+spec:
+  type: NodePort
+  selector:
+    app: argocd-mcp-plus
+  ports:
+    - name: http
+      port: 3000
+      targetPort: http
+      nodePort: 30901

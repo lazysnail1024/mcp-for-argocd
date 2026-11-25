@@ -1,49 +1,110 @@
-import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js';
 import express from 'express';
-import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import { logger } from '../logging/logging.js';
-import { createServer } from './server.js';
-import { randomUUID } from 'node:crypto';
 import type { AddressInfo } from 'node:net';
-import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
-import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js';
-import { tokenRegistryFromEnv } from './tokenRegistry.js';
+import {
+  createMcpHandler,
+  isLegacyRequest,
+  WebStandardStreamableHTTPServerTransport,
+  type McpRequestContext,
+  type ServerContext
+} from '@modelcontextprotocol/server';
+import { serveStdio } from '@modelcontextprotocol/server/stdio';
+import { toWebRequest } from '@modelcontextprotocol/node';
+import packageJSON from '../../package.json' with { type: 'json' };
+import { resolveMaxResponseBytes } from '../governance/byteBreaker.js';
+import { createWriteStateCodec } from '../governance/mrtrGate.js';
+import { ScopeFence } from '../governance/scopeFence.js';
+import { logger } from '../logging/logging.js';
+import { resolveSelectedTools, type ToolSelectionConfig } from '../toolsets/index.js';
+import { headerGuard } from './headerGuard.js';
 import {
   applyListenerSecurity,
   resolveListenerSecurity,
   type ListenerSecurityOptions
 } from './security.js';
+import { createServer } from './server.js';
+import { TokenRegistry, tokenRegistryFromEnv } from './tokenRegistry.js';
 
-// Load the base-URL -> token registry once at startup from the JSON file at
-// ARGOCD_TOKEN_REGISTRY_PATH. Shared across all connections; read-only after
-// construction.
-const tokenRegistry = tokenRegistryFromEnv();
+export type LegacyMode = 'stateless' | 'reject';
 
-export const connectStdioTransport = () => {
-  const server = createServer({
-    argocdBaseUrl: process.env.ARGOCD_BASE_URL || '',
-    argocdApiToken: process.env.ARGOCD_API_TOKEN || '',
-    tokenRegistry
-  });
-
-  logger.info('Connecting to stdio transport');
-  server.connect(new StdioServerTransport());
+export type CommonServerOptions = {
+  toolsets?: string;
+  tools?: string;
+  legacyMode?: LegacyMode;
+  tokenRegistry?: TokenRegistry;
+  scopeFence?: ScopeFence;
+  requestStateSecret?: string;
+  maxResponseBytes?: number;
+  allowPrune?: boolean;
 };
 
-export type TransportOptions = ListenerSecurityOptions;
+export type TransportOptions = ListenerSecurityOptions &
+  CommonServerOptions & {
+    stateless?: boolean;
+  };
 
-// Liveness probe, registered before the security middleware: a kubelet probe
-// addresses the pod IP and carries no bearer token. Reports only that we are up.
+const resolveSelection = (options: CommonServerOptions): ToolSelectionConfig => ({
+  toolsets: options.toolsets,
+  tools: options.tools
+});
+
+const validateStartupConfig = (options: CommonServerOptions): void => {
+  // Fail closed on invalid toolsets, tool names, or max response byte configuration.
+  resolveSelectedTools(resolveSelection(options));
+  if (options.maxResponseBytes === undefined) {
+    resolveMaxResponseBytes();
+  }
+};
+
+export const connectStdioTransport = (options: CommonServerOptions = {}) => {
+  validateStartupConfig(options);
+  const tokenRegistry = options.tokenRegistry ?? tokenRegistryFromEnv();
+  const scopeFence = options.scopeFence ?? ScopeFence.fromEnv();
+  const selection = resolveSelection(options);
+  const legacyMode = options.legacyMode ?? 'stateless';
+  const stateCodec = createWriteStateCodec({
+    secret: options.requestStateSecret,
+    getCaller: () => 'stdio'
+  });
+
+  logger.info(
+    `Starting ${packageJSON.name}@${packageJSON.version} over stdio (legacy=${legacyMode})`
+  );
+
+  return serveStdio(
+    (ctx: McpRequestContext) =>
+      createServer({
+        argocdBaseUrl: process.env.ARGOCD_BASE_URL || '',
+        argocdApiToken: process.env.ARGOCD_API_TOKEN || '',
+        tokenRegistry,
+        scopeFence,
+        selection,
+        era: ctx.era,
+        caller: 'stdio',
+        stateCodec,
+        maxResponseBytes: options.maxResponseBytes,
+        allowPrune: options.allowPrune
+      }),
+    {
+      legacy: legacyMode === 'reject' ? 'reject' : 'serve',
+      onerror: (error) => {
+        logger.error({ err: error.message }, 'Stdio MCP server error');
+      }
+    }
+  );
+};
+
+// Liveness probe registered before the security middleware so Kubelet probes
+// addressing the pod IP without a bearer token succeed.
 const registerHealthz = (app: express.Express) => {
   app.get('/healthz', (_, res) => {
-    res.status(200).json({ status: 'ok' });
+    res.status(200).json({
+      status: 'ok',
+      name: packageJSON.name,
+      version: packageJSON.version
+    });
   });
 };
 
-// Log the address actually bound, so an operator can see whether the listener is
-// loopback-only or exposed. Both handlers hang off events rather than
-// app.listen()'s callback, which Express invokes even when the bind fails, with
-// server.address() still null.
 const listen = (app: express.Express, bindAddress: string, port: number, label: string) => {
   const server = app.listen(port, bindAddress);
   server.on('listening', () => {
@@ -57,25 +118,10 @@ const listen = (app: express.Express, bindAddress: string, port: number, label: 
   return server;
 };
 
-// Resolve the session-level ArgoCD credentials from headers or env.
-//
-// The API token is only ever accepted here (x-argocd-api-token header or
-// ARGOCD_API_TOKEN env var) — never as a tool-call argument — so the secret
-// stays in the transport layer and out of prompts/model context.
-//
-// The token is normally MANDATORY and the connection is rejected when it is
-// missing. The exception is when a token registry (ARGOCD_TOKEN_REGISTRY_PATH)
-// is configured: the per-call base URL can then resolve its token from the
-// registry, so a tokenless connection is allowed.
-//
-// The base URL is optional at this level: when it is absent, callers may supply
-// it per call via the argocdBaseUrl tool argument.
-//
-// These are outbound credentials only. Inbound authorization is the listener's
-// job (MCP_AUTH_TOKEN, see security.ts).
 const resolveCredentials = (
   req: express.Request,
-  res: express.Response
+  res: express.Response,
+  tokenRegistry: TokenRegistry
 ): { argocdBaseUrl: string; argocdApiToken: string } | null => {
   const argocdBaseUrl =
     (req.headers['x-argocd-base-url'] as string) || process.env.ARGOCD_BASE_URL || '';
@@ -93,119 +139,180 @@ const resolveCredentials = (
   return { argocdBaseUrl, argocdApiToken };
 };
 
-export const connectSSETransport = (options: TransportOptions) => {
-  const security = resolveListenerSecurity(options);
-  const { port } = options;
-  const app = express();
-  registerHealthz(app);
-  applyListenerSecurity(app, security);
-  const transports: { [sessionId: string]: SSEServerTransport } = {};
-
-  app.get('/sse', async (req, res) => {
-    // Same credential requirement as the http transport. Without it the handler
-    // built an McpServer with empty credentials and held it until the socket
-    // closed, one per connection.
-    const credentials = resolveCredentials(req, res);
-    if (!credentials) return;
-    const server = createServer({ ...credentials, tokenRegistry });
-
-    const transport = new SSEServerTransport('/messages', res);
-    transports[transport.sessionId] = transport;
-    res.on('close', () => {
-      delete transports[transport.sessionId];
-    });
-    await server.connect(transport);
+// Write a Web Standard Response (JSON or SSE ReadableStream) onto Express res.
+const writeWebResponse = async (webRes: Response, res: express.Response): Promise<void> => {
+  res.status(webRes.status);
+  webRes.headers.forEach((value, key) => {
+    res.setHeader(key, value);
   });
 
-  app.post('/messages', async (req, res) => {
-    const sessionId = req.query.sessionId as string;
-    const transport = transports[sessionId];
-    if (transport) {
-      await transport.handlePostMessage(req, res);
-    } else {
-      res.status(400).send(`No transport found for sessionId: ${sessionId}`);
+  if (!webRes.body) {
+    res.end();
+    return;
+  }
+
+  const reader = webRes.body.getReader();
+  const onClose = () => {
+    reader.cancel().catch(() => {});
+  };
+  res.on('close', onClose);
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (value) {
+        if (!res.write(value)) {
+          await new Promise<void>((resolve) => res.once('drain', resolve));
+        }
+      }
     }
-  });
-
-  return listen(app, security.bindAddress, port, 'SSE transport');
+    res.end();
+  } finally {
+    res.off('close', onClose);
+  }
 };
 
-export const connectHttpTransport = (options: TransportOptions & { stateless?: boolean }) => {
+// Normalize Accept header on legacy stateless JSON-enabled requests so clients
+// sending `Accept: application/json` (without `text/event-stream`) are served
+// cleanly with `application/json` instead of receiving a spurious 406.
+const normalizeLegacyAccept = (req: Request): Request => {
+  const accept = req.headers.get('accept') ?? '';
+  if (accept.includes('application/json') && accept.includes('text/event-stream')) {
+    return req;
+  }
+  const headers = new Headers(req.headers);
+  headers.set('accept', 'application/json, text/event-stream');
+  return new Request(req, { headers });
+};
+
+const extractCallerHeader = (headers: Headers | undefined): string =>
+  (headers?.get('x-mcp-caller') ?? '').trim();
+
+export const createHttpApp = (options: TransportOptions) => {
+  validateStartupConfig(options);
   const security = resolveListenerSecurity(options);
-  const { port, stateless = false } = options;
+  const tokenRegistry = options.tokenRegistry ?? tokenRegistryFromEnv();
+  const scopeFence = options.scopeFence ?? ScopeFence.fromEnv();
+  const selection = resolveSelection(options);
+  const legacyMode: LegacyMode = options.legacyMode ?? 'stateless';
+
+  if (options.stateless === false) {
+    logger.warn(
+      'Stateful HTTP session mode (--no-stateless) has been removed; ' +
+        'running in stateless Dual-Era mode instead.'
+    );
+  }
+
+  const stateCodec = createWriteStateCodec({
+    secret: options.requestStateSecret,
+    getCaller: (ctx: ServerContext) => {
+      const httpHeaders = (ctx as { http?: { req?: Request } }).http?.req?.headers;
+      return extractCallerHeader(httpHeaders);
+    }
+  });
+
+  const buildServerForRequest = (ctx: McpRequestContext) => {
+    const reqHeaders = ctx.requestInfo?.headers;
+    const argocdBaseUrl = reqHeaders?.get('x-argocd-base-url') || process.env.ARGOCD_BASE_URL || '';
+    const argocdApiToken =
+      reqHeaders?.get('x-argocd-api-token') || process.env.ARGOCD_API_TOKEN || '';
+    const caller = extractCallerHeader(reqHeaders);
+
+    return createServer({
+      argocdBaseUrl,
+      argocdApiToken,
+      tokenRegistry,
+      scopeFence,
+      selection,
+      era: ctx.era,
+      caller,
+      stateCodec,
+      maxResponseBytes: options.maxResponseBytes,
+      allowPrune: options.allowPrune
+    });
+  };
+
+  // Modern 2026-07-28 handler (rejects legacy when routed here directly).
+  const modernHandler = createMcpHandler(buildServerForRequest, {
+    legacy: 'reject',
+    responseMode: 'auto',
+    onerror: (error) => {
+      logger.warn({ err: error.message }, 'MCP HTTP request error');
+    }
+  });
+
   const app = express();
   registerHealthz(app);
   applyListenerSecurity(app, security);
-  // After the security middleware, so malformed JSON returns 401/403 rather than
-  // the body parser's 400, which would tell a caller it passed the credential check.
   app.use(express.json());
+  app.use('/mcp', headerGuard);
 
-  const httpTransports: { [sessionId: string]: StreamableHTTPServerTransport } = {};
-
-  app.post('/mcp', async (req, res) => {
-    const sessionIdFromHeader = req.headers['mcp-session-id'] as string | undefined;
-    let transport: StreamableHTTPServerTransport;
-
-    if (!stateless && sessionIdFromHeader && httpTransports[sessionIdFromHeader]) {
-      transport = httpTransports[sessionIdFromHeader];
-    } else if (stateless || (!sessionIdFromHeader && isInitializeRequest(req.body))) {
-      const credentials = resolveCredentials(req, res);
-      if (!credentials) return;
-
-      transport = new StreamableHTTPServerTransport(
-        stateless
-          ? { sessionIdGenerator: undefined }
-          : {
-              sessionIdGenerator: () => randomUUID(),
-              onsessioninitialized: (newSessionId) => {
-                httpTransports[newSessionId] = transport;
-              }
-            }
-      );
-
-      if (!stateless) {
-        transport.onclose = () => {
-          if (transport.sessionId) delete httpTransports[transport.sessionId];
-        };
-      }
-
-      const server = createServer({ ...credentials, tokenRegistry });
-      await server.connect(transport);
-    } else {
-      const errorMsg = sessionIdFromHeader
-        ? `Invalid or expired session ID: ${sessionIdFromHeader}`
-        : 'Bad Request: Not an initialization request and no valid session ID provided.';
-      res.status(400).json({
-        jsonrpc: '2.0',
-        error: { code: -32000, message: errorMsg },
-        id: req.body?.id !== undefined ? req.body.id : null
-      });
-      return;
-    }
-
-    await transport.handleRequest(req, res, req.body);
-  });
-
-  const handleSessionRequest = async (req: express.Request, res: express.Response) => {
-    if (stateless) {
-      res.status(405).send('Method Not Allowed in stateless mode');
-      return;
-    }
-    const sessionId = req.headers['mcp-session-id'] as string | undefined;
-    if (!sessionId || !httpTransports[sessionId]) {
-      res.status(400).send('Invalid or missing session ID');
-      return;
-    }
-    await httpTransports[sessionId].handleRequest(req, res);
+  const methodNotAllowed: express.RequestHandler = (_req, res) => {
+    res.setHeader('Allow', 'POST');
+    res.status(405).json({
+      jsonrpc: '2.0',
+      error: { code: -32600, message: 'Method Not Allowed in stateless mode' },
+      id: null
+    });
   };
 
-  app.get('/mcp', handleSessionRequest);
-  app.delete('/mcp', handleSessionRequest);
+  app.get('/mcp', methodNotAllowed);
+  app.delete('/mcp', methodNotAllowed);
 
+  app.post('/mcp', async (req, res) => {
+    const credentials = resolveCredentials(req, res, tokenRegistry);
+    if (!credentials) return;
+
+    try {
+      const webReq = await toWebRequest(req, req.body);
+      const legacy = await isLegacyRequest(webReq, req.body);
+
+      if (!legacy || legacyMode === 'reject') {
+        const response = await modernHandler.fetch(webReq, { parsedBody: req.body });
+        await writeWebResponse(response, res);
+        return;
+      }
+
+      // Legacy 2025-era stateless serving with enableJsonResponse enabled.
+      const legacyReq = normalizeLegacyAccept(webReq);
+      const server = buildServerForRequest({ era: 'legacy', requestInfo: legacyReq });
+      const transport = new WebStandardStreamableHTTPServerTransport({
+        sessionIdGenerator: undefined,
+        enableJsonResponse: true
+      });
+      await server.connect(transport);
+      try {
+        const response = await transport.handleRequest(legacyReq, { parsedBody: req.body });
+        await writeWebResponse(response, res);
+      } finally {
+        await transport.close().catch(() => {});
+        await server.close().catch(() => {});
+      }
+    } catch (error) {
+      logger.error(
+        { err: error instanceof Error ? error.message : String(error) },
+        'Unhandled error serving /mcp request'
+      );
+      if (!res.headersSent) {
+        res.status(500).json({
+          jsonrpc: '2.0',
+          error: { code: -32603, message: 'Internal server error' },
+          id: null
+        });
+      }
+    }
+  });
+
+  return { app, security, close: () => modernHandler.close() };
+};
+
+export const connectHttpTransport = (options: TransportOptions) => {
+  const { app, security } = createHttpApp(options);
+  const legacyMode = options.legacyMode ?? 'stateless';
   return listen(
     app,
     security.bindAddress,
-    port,
-    `Http Stream transport${stateless ? ' (stateless mode)' : ''}`
+    options.port,
+    `${packageJSON.name}@${packageJSON.version} HTTP stateless transport (legacy=${legacyMode})`
   );
 };

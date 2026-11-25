@@ -1,43 +1,39 @@
-FROM node:20-slim AS base
+FROM node:22-slim AS pnpm-base
 ENV PNPM_HOME="/pnpm"
 ENV PATH="$PNPM_HOME:$PATH"
-# Run pnpm non-interactively: without a TTY, pnpm 10 otherwise aborts when it
-# needs to purge node_modules (ERR_PNPM_ABORTED_REMOVE_MODULES_DIR_NO_TTY).
+# Run pnpm non-interactively in container builds without a TTY.
 ENV CI=true
 RUN corepack enable
-COPY . /app
 WORKDIR /app
 
-FROM base AS prod-deps
+FROM pnpm-base AS prod-deps
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 RUN --mount=type=cache,id=pnpm,target=/pnpm/store pnpm install --prod --frozen-lockfile
 
 # Run the build on the NATIVE builder platform (--platform=$BUILDPLATFORM), not
-# the target platform. tsup/esbuild ship a Go binary that crashes under QEMU
-# emulation (fatal error: lfstack.push) when cross-building. The output is plain,
-# architecture-independent JavaScript, so it is safe to copy into a target-arch
-# final image below.
-FROM --platform=$BUILDPLATFORM node:20-slim AS build
+# the target platform. tsup/esbuild ship a Go binary that can crash under QEMU
+# emulation when cross-building. Output is architecture-independent JS.
+FROM --platform=$BUILDPLATFORM node:22-slim AS build
 ENV PNPM_HOME="/pnpm"
 ENV PATH="$PNPM_HOME:$PATH"
 ENV CI=true
 RUN corepack enable
-COPY . /app
 WORKDIR /app
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 RUN --mount=type=cache,id=pnpm,target=/pnpm/store pnpm install --frozen-lockfile
+COPY tsconfig.json tsup.config.ts ./
+COPY src ./src
 RUN pnpm run build
 
-FROM base
-COPY --from=prod-deps /app/node_modules /app/node_modules
-COPY --from=build /app/dist /app/dist
+# Minimal slim runtime stage containing only package.json, prod dependencies, and compiled dist/.
+FROM node:22-slim AS runtime
+WORKDIR /app
+COPY package.json ./
+COPY --from=prod-deps /app/node_modules ./node_modules
+COPY --from=build /app/dist ./dist
 EXPOSE 3000
-# No MCP_BIND_ADDRESS here on purpose. The image keeps the loopback default, which
-# a sidecar or any other container sharing this network namespace can reach.
-# Publishing a port is the case that needs a wider bind, and that stays an explicit
-# `-e MCP_BIND_ADDRESS=0.0.0.0` alongside an inbound credential. See "Network
-# Exposure" in the README.
-#
-# Split so that overriding the command only replaces the arguments, not the
-# interpreter: `docker run <image> http --stateless` works as written.
+# Loopback default is preserved intentionally; widening bind requires explicit
+# MCP_BIND_ADDRESS=0.0.0.0 alongside MCP_AUTH_TOKEN or --allow-unauthenticated.
 ENTRYPOINT [ "node", "dist/index.js" ]
 CMD [ "http" ]
 USER 1000
